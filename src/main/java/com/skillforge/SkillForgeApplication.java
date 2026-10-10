@@ -42,7 +42,7 @@ public class SkillForgeApplication {
         SpringApplication.run(SkillForgeApplication.class, args);
     }
 
-    // Create the users table when the application starts
+    // Create the users table when the application starts.
     @Bean
     CommandLineRunner initializeDatabase() {
         return args -> db.execute(
@@ -55,14 +55,14 @@ public class SkillForgeApplication {
         );
     }
 
-    // Request data for registration and login
+    // Request data for registration and login.
     public record AuthRequest(
         String name,
         String email,
         String password
     ) {}
 
-    // Hash passwords securely using PBKDF2
+    // Hash passwords using PBKDF2.
     private String hashPassword(String password) throws Exception {
         byte[] salt = new byte[16];
         new SecureRandom().nextBytes(salt);
@@ -74,19 +74,21 @@ public class SkillForgeApplication {
             256
         );
 
-        byte[] hash = SecretKeyFactory
-            .getInstance("PBKDF2WithHmacSHA256")
-            .generateSecret(spec)
-            .getEncoded();
+        try {
+            byte[] hash = SecretKeyFactory
+                .getInstance("PBKDF2WithHmacSHA256")
+                .generateSecret(spec)
+                .getEncoded();
 
-        spec.clearPassword();
-
-        return Base64.getEncoder().encodeToString(salt)
-            + ":"
-            + Base64.getEncoder().encodeToString(hash);
+            return Base64.getEncoder().encodeToString(salt)
+                + ":"
+                + Base64.getEncoder().encodeToString(hash);
+        } finally {
+            spec.clearPassword();
+        }
     }
 
-    // Verify a password against its stored hash
+    // Verify a password against its stored hash.
     private boolean verifyPassword(
         String password,
         String stored
@@ -108,22 +110,25 @@ public class SkillForgeApplication {
             256
         );
 
-        byte[] actual = SecretKeyFactory
-            .getInstance("PBKDF2WithHmacSHA256")
-            .generateSecret(spec)
-            .getEncoded();
+        try {
+            byte[] actual = SecretKeyFactory
+                .getInstance("PBKDF2WithHmacSHA256")
+                .generateSecret(spec)
+                .getEncoded();
 
-        spec.clearPassword();
-
-        return MessageDigest.isEqual(expected, actual);
+            return MessageDigest.isEqual(expected, actual);
+        } finally {
+            spec.clearPassword();
+        }
     }
 
-    // Register a new user
+    // Register a new user.
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody AuthRequest r) {
         try {
             if (r.name() == null || r.name().isBlank()
-                    || r.email() == null || r.password() == null
+                    || r.email() == null || r.email().isBlank()
+                    || r.password() == null
                     || r.password().length() < 8) {
 
                 return ResponseEntity.badRequest().body(
@@ -134,9 +139,18 @@ public class SkillForgeApplication {
                 );
             }
 
+            String name = r.name().trim();
             String email = r.email().trim().toLowerCase();
 
-            if (!email.matches("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")) {
+            if (name.isEmpty() || name.length() > 100) {
+                return ResponseEntity.badRequest().body(
+                    Map.of("message", "Enter a valid name.")
+                );
+            }
+
+            if (email.length() > 150
+                    || !email.matches("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")) {
+
                 return ResponseEntity.badRequest().body(
                     Map.of("message", "Enter a valid email address.")
                 );
@@ -154,11 +168,14 @@ public class SkillForgeApplication {
                 );
             }
 
+            String passwordHash = hashPassword(r.password());
+
             db.update(
-                "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
-                r.name().trim(),
+                "INSERT INTO users (name, email, password_hash) " +
+                "VALUES (?, ?, ?)",
+                name,
                 email,
-                hashPassword(r.password())
+                passwordHash
             );
 
             return ResponseEntity.status(HttpStatus.CREATED).body(
@@ -169,6 +186,10 @@ public class SkillForgeApplication {
             );
 
         } catch (Exception e) {
+            // Keep the actual exception in Render logs.
+            System.err.println("Registration failed:");
+            e.printStackTrace();
+
             return ResponseEntity.internalServerError().body(
                 Map.of(
                     "message",
@@ -178,11 +199,14 @@ public class SkillForgeApplication {
         }
     }
 
-    // Log in an existing user
+    // Log in an existing user.
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody AuthRequest r) {
         try {
-            if (r.email() == null || r.password() == null) {
+            if (r.email() == null || r.email().isBlank()
+                    || r.password() == null
+                    || r.password().isEmpty()) {
+
                 return ResponseEntity.badRequest().body(
                     Map.of("message", "Email and password are required.")
                 );
@@ -219,7 +243,7 @@ public class SkillForgeApplication {
 
             var user = users.get(0);
 
-            // Never return the stored password hash to the frontend
+            // Never return the password hash to the frontend.
             return ResponseEntity.ok(
                 Map.of(
                     "message", "Login successful.",
@@ -230,6 +254,10 @@ public class SkillForgeApplication {
             );
 
         } catch (Exception e) {
+            // Keep the actual exception in Render logs.
+            System.err.println("Login failed:");
+            e.printStackTrace();
+
             return ResponseEntity.internalServerError().body(
                 Map.of(
                     "message",
